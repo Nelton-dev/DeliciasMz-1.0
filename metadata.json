@@ -1,0 +1,7 @@
+{
+  "name": "DelíciasMZ",
+  "description": "A social network for Mozambican cuisine. Discover, share, and cook authentic dishes.",
+  "requestFramePermissions": [
+    "camera"
+  ]
+}
