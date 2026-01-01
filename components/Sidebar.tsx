@@ -9,10 +9,11 @@ interface SidebarProps {
   isOpen: boolean;
   setIsOpen: (isOpen: boolean) => void;
   isAdmin: boolean;
+  isGuestMode: boolean;
   onAdminToggle: () => void;
 }
 
-const Sidebar: React.FC<SidebarProps> = ({ currentView, setView, isOpen, setIsOpen, isAdmin, onAdminToggle }) => {
+const Sidebar: React.FC<SidebarProps> = ({ currentView, setView, isOpen, setIsOpen, isAdmin, isGuestMode, onAdminToggle }) => {
   
   const menuItems = [
     { id: ViewState.HOME, label: 'Início', icon: Home, color: 'text-blue-600' },
@@ -122,21 +123,23 @@ const Sidebar: React.FC<SidebarProps> = ({ currentView, setView, isOpen, setIsOp
         {/* Footer Info */}
         <div className="p-6 border-t border-gray-100 bg-gray-50 shrink-0">
             <p className="text-xs text-gray-400 text-center leading-relaxed mb-4">
-                © 2025 DelíciasMZ<br/>
+                © 2026 DelíciasMZ<br/>
                 <span className="opacity-75 font-semibold text-gray-500">Nelton da Méria Nazaré Ambate</span>
             </p>
             
-            <button 
-                onClick={onAdminToggle}
-                className={`w-full flex items-center justify-center gap-2 py-2 px-4 rounded-lg text-xs font-medium transition-colors
-                    ${isAdmin 
-                        ? 'bg-red-100 text-red-700 hover:bg-red-200' 
-                        : 'bg-gray-100 text-gray-500 hover:bg-gray-200'}
-                `}
-            >
-                {isAdmin ? <Unlock size={14} /> : <Lock size={14} />}
-                {isAdmin ? 'Sair do Admin' : 'Admin'}
-            </button>
+            {!isGuestMode && (
+                <button 
+                    onClick={onAdminToggle}
+                    className={`w-full flex items-center justify-center gap-2 py-2 px-4 rounded-lg text-xs font-medium transition-colors
+                        ${isAdmin 
+                            ? 'bg-red-100 text-red-700 hover:bg-red-200' 
+                            : 'bg-gray-100 text-gray-500 hover:bg-gray-200'}
+                    `}
+                >
+                    {isAdmin ? <Unlock size={14} /> : <Lock size={14} />}
+                    {isAdmin ? 'Sair do Admin' : 'Admin'}
+                </button>
+            )}
         </div>
       </aside>
     </>

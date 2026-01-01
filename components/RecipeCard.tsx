@@ -45,6 +45,11 @@ const RecipeCard: React.FC<RecipeCardProps> = ({
 
   const hasLiked = recipe.likedBy.includes(currentUserId);
   const commentsCount = recipe.comments ? recipe.comments.length + recipe.comments.reduce((acc, c) => acc + (c.replies?.length || 0), 0) : 0;
+  
+  // VERIFICAÇÃO DE PERMISSÃO
+  const isGuest = currentUserId === 'guest';
+  const isOwner = currentUserId && recipe.author.id === currentUserId;
+  const canEdit = isAdmin || isOwner;
 
   const handleGetTip = async () => {
     if (tip) return;
@@ -67,14 +72,14 @@ const RecipeCard: React.FC<RecipeCardProps> = ({
 
   const handlePostComment = (e: React.FormEvent) => {
       e.preventDefault();
-      if (!newComment.trim()) return;
+      if (!newComment.trim() || isGuest) return;
       onAddComment(recipe.id, newComment);
       setNewComment('');
   };
 
   const handlePostReply = (commentId: string) => {
       const text = replyText[commentId];
-      if (!text?.trim()) return;
+      if (!text?.trim() || isGuest) return;
       onAddReply(recipe.id, commentId, text);
       setReplyText(prev => ({...prev, [commentId]: ''}));
       setReplyingTo(null);
@@ -95,21 +100,22 @@ const RecipeCard: React.FC<RecipeCardProps> = ({
   return (
     <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden mb-6 transition-all hover:shadow-md relative">
       
-      {/* Admin Controls */}
+      {/* Admin / Owner Controls */}
       <div className="absolute top-4 left-4 z-10 flex gap-2">
-            {/* Always show Edit button so user can fix image */}
-            <button 
-                onClick={(e) => { e.stopPropagation(); onEdit?.(recipe); }}
-                className="bg-white/90 text-gray-700 p-2 rounded-full shadow-lg hover:bg-orange-100 hover:text-orange-600 transition backdrop-blur-sm"
-                title="Editar Receita / Trocar Foto"
-            >
-                <Pencil size={16} />
-            </button>
+            {canEdit && (
+                <button 
+                    onClick={(e) => { e.stopPropagation(); onEdit?.(recipe); }}
+                    className="bg-white/90 text-gray-700 p-2 rounded-full shadow-lg hover:bg-orange-100 hover:text-orange-600 transition backdrop-blur-sm"
+                    title="Editar Receita"
+                >
+                    <Pencil size={16} />
+                </button>
+            )}
             {isAdmin && (
                 <button 
                     onClick={(e) => { e.stopPropagation(); onDelete?.(recipe.id); }}
                     className="bg-white/90 text-red-600 p-2 rounded-full shadow-lg hover:bg-red-100 transition backdrop-blur-sm"
-                    title="Apagar Receita"
+                    title="Apagar Receita (Admin)"
                 >
                     <Trash2 size={16} />
                 </button>
@@ -119,18 +125,17 @@ const RecipeCard: React.FC<RecipeCardProps> = ({
       {/* Header / Image */}
       <div className="relative h-64 overflow-hidden group bg-gray-100 flex items-center justify-center">
         {imgError ? (
-            <button 
-                onClick={() => onEdit?.(recipe)}
-                className="flex flex-col items-center justify-center w-full h-full text-gray-400 hover:bg-gray-200 transition cursor-pointer gap-3"
+            <div className={`flex flex-col items-center justify-center w-full h-full text-gray-400 gap-3 ${canEdit ? 'cursor-pointer hover:bg-gray-200' : ''}`}
+                 onClick={() => canEdit && onEdit?.(recipe)}
             >
                 <div className="bg-white p-4 rounded-full shadow-sm">
                     <ImagePlus size={32} className="text-orange-500" />
                 </div>
                 <div className="text-center px-4">
                     <span className="text-sm font-medium text-gray-600 block">Foto indisponível</span>
-                    <span className="text-xs text-orange-600 font-bold mt-1">Clique para carregar a sua foto</span>
+                    {canEdit && <span className="text-xs text-orange-600 font-bold mt-1">Clique para carregar a sua foto</span>}
                 </div>
-            </button>
+            </div>
         ) : (
             <img 
                 src={imageSrc} 
@@ -153,7 +158,7 @@ const RecipeCard: React.FC<RecipeCardProps> = ({
             <div>
                 <h3 className="text-xl font-bold text-gray-900 leading-tight">{recipe.title}</h3>
                 <p className="text-sm text-gray-500 flex items-center mt-1">
-                    Publicado por <span className="font-semibold text-gray-700 ml-1">{recipe.author.name}</span>
+                    Publicado por <span className="font-semibold text-gray-700 ml-1">{recipe.author.name} {isOwner ? '(Você)' : ''}</span>
                 </p>
             </div>
             {/* Social Like Button */}
@@ -297,7 +302,7 @@ const RecipeCard: React.FC<RecipeCardProps> = ({
 
                             {/* Reply Action */}
                             <div className="mt-2 flex items-center gap-2">
-                                {replyingTo === comment.id ? (
+                                {replyingTo === comment.id && !isGuest ? (
                                     <div className="flex items-center w-full gap-2 animate-fadeIn">
                                         <input
                                             autoFocus
@@ -312,12 +317,14 @@ const RecipeCard: React.FC<RecipeCardProps> = ({
                                         </button>
                                     </div>
                                 ) : (
-                                    <button
-                                        onClick={() => setReplyingTo(comment.id)}
-                                        className="text-xs text-gray-400 hover:text-orange-600 flex items-center gap-1 transition"
-                                    >
-                                        <ReplyIcon size={12} /> Responder
-                                    </button>
+                                    !isGuest && (
+                                        <button
+                                            onClick={() => setReplyingTo(comment.id)}
+                                            className="text-xs text-gray-400 hover:text-orange-600 flex items-center gap-1 transition"
+                                        >
+                                            <ReplyIcon size={12} /> Responder
+                                        </button>
+                                    )
                                 )}
                             </div>
                         </div>
@@ -328,14 +335,17 @@ const RecipeCard: React.FC<RecipeCardProps> = ({
             {/* New Comment Input */}
             <form onSubmit={handlePostComment} className="flex gap-2 relative">
                 <input
-                    className="flex-1 bg-white border border-gray-300 rounded-full px-4 py-2 text-sm focus:ring-2 focus:ring-orange-500 focus:outline-none transition"
-                    placeholder="Adicione um comentário..."
+                    className={`flex-1 bg-white border border-gray-300 rounded-full px-4 py-2 text-sm focus:ring-2 focus:ring-orange-500 focus:outline-none transition
+                        ${isGuest ? 'bg-gray-100 text-gray-400 cursor-not-allowed' : ''}
+                    `}
+                    placeholder={isGuest ? "Faça login para comentar..." : "Adicione um comentário..."}
                     value={newComment}
                     onChange={(e) => setNewComment(e.target.value)}
+                    disabled={isGuest}
                 />
                 <button
                     type="submit"
-                    disabled={!newComment.trim()}
+                    disabled={!newComment.trim() || isGuest}
                     className="bg-orange-600 text-white p-2 rounded-full hover:bg-orange-700 disabled:opacity-50 disabled:cursor-not-allowed transition shadow-sm"
                 >
                     <Send size={18} />

@@ -7,89 +7,202 @@ import AIChef from './components/AIChef';
 import MusicPlayer from './components/MusicPlayer';
 import AboutPage from './components/AboutPage';
 import AdPlaceholder from './components/AdPlaceholder';
+import Login from './components/Login';
+import Toast from './components/Toast'; // Importa o novo componente
 import { ViewState, Recipe, CATEGORIES } from './types';
 import { storageService } from './services/storage';
-import { Utensils, Plus, Heart } from 'lucide-react';
+import { supabase } from './services/supabase';
+import { Utensils, Plus, Heart, LogOut, User } from 'lucide-react';
 
 const App: React.FC = () => {
+  // Auth State
+  const [session, setSession] = useState<any>(null);
+  const [authLoading, setAuthLoading] = useState(true);
+  const [isGuestMode, setIsGuestMode] = useState(false);
+
+  // App State
   const [currentView, setCurrentView] = useState<ViewState>(ViewState.LANDING);
   const [recipes, setRecipes] = useState<Recipe[]>([]);
   const [favorites, setFavorites] = useState<string[]>([]);
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
   
-  // Mock User Identity (In a real app, this would come from Auth)
-  const [currentUser] = useState({ id: 'me_' + Date.now(), name: 'Você' });
-
-  // Admin & Editing State
   const [isAdmin, setIsAdmin] = useState(false);
   const [editingRecipe, setEditingRecipe] = useState<Recipe | null>(null);
+  const [dataLoading, setDataLoading] = useState(false);
+  
+  // Feedback State
+  const [welcomeMessage, setWelcomeMessage] = useState<string | null>(null);
 
-  // Load data on mount
+  // 1. Check Auth on Mount
   useEffect(() => {
-    const loadedRecipes = storageService.getRecipes();
-    const loadedFavorites = storageService.getFavorites();
-    setRecipes(loadedRecipes);
-    setFavorites(loadedFavorites);
+    let mounted = true;
+
+    // Timeout de segurança: se o Supabase não responder em 3s, libera o carregamento
+    const timer = setTimeout(() => {
+        if (mounted && authLoading) setAuthLoading(false);
+    }, 3000);
+
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      if (mounted) {
+          setSession(session);
+          setAuthLoading(false);
+      }
+    }).catch(err => {
+        // Silently warn for offline/network errors instead of red console error
+        console.warn("Supabase Auth (Modo Offline):", err.message);
+        if (mounted) setAuthLoading(false);
+    });
+
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((event, session) => {
+      if (mounted) {
+          setSession(session);
+          if(session) {
+              fetchRecipes();
+              // Lógica de Boas-vindas para Login Real
+              if (event === 'SIGNED_IN') {
+                  const name = session.user.user_metadata?.full_name?.split(' ')[0] || 'Chef';
+                  setWelcomeMessage(`Que bom ter você aqui, ${name}!`);
+              }
+          }
+      }
+    });
+
+    return () => {
+        mounted = false;
+        clearTimeout(timer);
+        subscription.unsubscribe();
+    };
   }, []);
 
+  // 2. Fetch Data
+  const fetchRecipes = async () => {
+      setDataLoading(true);
+      const data = await storageService.getRecipes();
+      setRecipes(data);
+      setFavorites(storageService.getFavorites());
+      setDataLoading(false);
+  };
+
+  // Carrega receitas iniciais se entrar em modo visitante ou landing
+  useEffect(() => {
+      if (isGuestMode || !session) {
+          fetchRecipes(); 
+      }
+  }, [session, isGuestMode]);
+
+  const handleLogout = async () => {
+      if (session) {
+        await supabase.auth.signOut();
+      }
+      setSession(null);
+      setIsGuestMode(false);
+      setCurrentView(ViewState.LANDING);
+      setWelcomeMessage(null); // Limpa mensagem ao sair
+  };
+
   const handleAdminToggle = () => {
+    if (isGuestMode) return; // Visitantes não acessam admin
+    
     if (isAdmin) {
       setIsAdmin(false);
     } else {
       const pwd = window.prompt("Senha de Administrador:");
       if (pwd === "admin") {
         setIsAdmin(true);
-        alert("Modo Admin Ativado! Agora você pode editar ou excluir receitas.");
-      } else if (pwd !== null) {
-        alert("Senha incorreta.");
+        alert("Modo Admin Ativado!");
       }
     }
   };
+
+  const handleGuestLogin = () => {
+      setIsGuestMode(true);
+      setWelcomeMessage("Você entrou como visitante. Explore à vontade!");
+  };
+
+  // --- Async Wrappers for Actions ---
+
+  const currentUserId = session?.user?.id || (isGuestMode ? 'guest' : '');
 
   const handleToggleFavorite = (id: string) => {
     const newFavorites = storageService.toggleFavorite(id);
     setFavorites(newFavorites);
   };
 
-  const handleToggleLike = (id: string) => {
-    const updatedRecipes = storageService.toggleLike(id, currentUser.id);
-    setRecipes(updatedRecipes);
+  const handleToggleLike = async (id: string) => {
+    if (!session && !isGuestMode) return;
+    if (isGuestMode) return alert("Modo Visitante: Faça login para curtir receitas!");
+    
+    // Otimistic UI update
+    const recipe = recipes.find(r => r.id === id);
+    if(recipe) await storageService.toggleLike(id, currentUserId, recipe.likedBy);
+    fetchRecipes(); // Re-sync
   };
 
-  const handleAddComment = (id: string, text: string) => {
-    const updatedRecipes = storageService.addComment(id, text, currentUser);
-    setRecipes(updatedRecipes);
+  const handleAddComment = async (id: string, text: string) => {
+    if (isGuestMode) return alert("Modo Visitante: Faça login para comentar!");
+    if (!session) return;
+    await storageService.addComment(id, text, currentUserId);
+    fetchRecipes();
   };
 
-  const handleAddReply = (recipeId: string, commentId: string, text: string) => {
-    const updatedRecipes = storageService.addReply(recipeId, commentId, text, currentUser);
-    setRecipes(updatedRecipes);
+  const handleAddReply = async (recipeId: string, commentId: string, text: string) => {
+    if (isGuestMode) return alert("Modo Visitante: Faça login para responder!");
+    if (!session) return;
+    await storageService.addReply(recipeId, commentId, text, currentUserId);
+    fetchRecipes();
   };
 
-  const handleSaveRecipe = (savedRecipe: Recipe) => {
-    const updatedList = storageService.saveRecipe(savedRecipe);
-    setRecipes(updatedList);
-    setEditingRecipe(null);
-    setCurrentView(ViewState.HOME);
+  const handleSaveRecipe = async (savedRecipe: Recipe) => {
+    if (isGuestMode) return alert("Modo Visitante: Faça login para publicar receitas!");
+    if (!session) return;
+    
+    setDataLoading(true);
+    try {
+        await storageService.saveRecipe(savedRecipe, currentUserId);
+        await fetchRecipes();
+        setEditingRecipe(null);
+        setCurrentView(ViewState.HOME);
+    } catch (error: any) {
+        alert("Erro ao salvar: " + error.message);
+    } finally {
+        setDataLoading(false);
+    }
   };
 
-  const handleDeleteRecipe = (id: string) => {
+  const handleDeleteRecipe = async (id: string) => {
+    if (isGuestMode) return;
+    if (!session) return;
     if (window.confirm("Tem certeza que deseja apagar esta receita permanentemente?")) {
-      const updatedList = storageService.deleteRecipe(id);
-      setRecipes(updatedList);
+      await storageService.deleteRecipe(id);
+      fetchRecipes();
     }
   };
 
   const handleEditRecipe = (recipe: Recipe) => {
-    setEditingRecipe(recipe);
-    setCurrentView(ViewState.CREATE);
+    // Apenas o autor ou admin pode editar
+    if (isGuestMode) return alert("Modo Visitante: Ação não permitida.");
+    
+    if (isAdmin || recipe.author.id === session?.user?.id) {
+        setEditingRecipe(recipe);
+        setCurrentView(ViewState.CREATE);
+    } else {
+        alert("Você só pode editar suas próprias receitas.");
+    }
   };
 
-  // Helper to change view and reset editing state if needed
+  // Helper to change view
   const handleSetView = (view: ViewState) => {
+    // LIMITAÇÃO MODO VISITANTE: Impede entrar na tela de criação
+    if (view === ViewState.CREATE && isGuestMode) {
+        alert("🔒 Modo Visitante\n\nPara compartilhar suas próprias receitas, por favor faça login ou crie uma conta.");
+        return;
+    }
+
     if (view === ViewState.CREATE && currentView !== ViewState.CREATE) {
-        setEditingRecipe(null); // Reset if manually going to create
+        setEditingRecipe(null);
     }
     setCurrentView(view);
     setSelectedCategory(null);
@@ -101,20 +214,26 @@ const App: React.FC = () => {
 
   const favoriteRecipes = recipes.filter(r => favorites.includes(r.id));
 
-  const EmptyState = ({ message, icon: Icon = Utensils, actionLabel, onAction }: { message: string, icon?: React.ElementType, actionLabel?: string, onAction?: () => void }) => (
+  // --- Render Logic ---
+
+  if (authLoading) {
+      return <div className="h-screen w-screen flex items-center justify-center bg-gray-50 text-orange-600 font-bold">Carregando DelíciasMZ...</div>;
+  }
+
+  // Se não tem sessão, não está em modo visitante e não está na Landing Page, mostra Login
+  if (!session && !isGuestMode && currentView !== ViewState.LANDING) {
+      return <Login onGuestLogin={handleGuestLogin} />;
+  }
+
+  const EmptyState = ({ message, icon: Icon = Utensils, actionLabel, onAction }: any) => (
     <div className="flex flex-col items-center justify-center py-16 text-center">
         <div className="bg-orange-100 p-6 rounded-full mb-4">
             <Icon size={48} className="text-orange-500" />
         </div>
         <h3 className="text-xl font-bold text-gray-800 mb-2">{message}</h3>
-        <p className="text-gray-500 max-w-sm mb-6">
-            A cozinha está vazia. Que tal ser o primeiro a compartilhar uma delícia moçambicana?
-        </p>
+        <p className="text-gray-500 max-w-sm mb-6">A cozinha está vazia. Que tal ser o primeiro a compartilhar uma delícia moçambicana?</p>
         {actionLabel && onAction && (
-          <button 
-              onClick={onAction}
-              className="flex items-center gap-2 bg-orange-600 hover:bg-orange-700 text-white px-6 py-3 rounded-xl font-semibold transition shadow-md hover:shadow-lg"
-          >
+          <button onClick={onAction} className="flex items-center gap-2 bg-orange-600 hover:bg-orange-700 text-white px-6 py-3 rounded-xl font-semibold transition shadow-md">
               <Plus size={20} />
               {actionLabel}
           </button>
@@ -124,8 +243,16 @@ const App: React.FC = () => {
 
   return (
     <div className="flex h-screen bg-gray-50 overflow-hidden relative">
-      {/* Global Music Player Widget - Passes logic to change style on Landing */}
       <MusicPlayer isLandingPage={currentView === ViewState.LANDING} />
+      
+      {/* Exibe o Toast se houver mensagem */}
+      {welcomeMessage && (
+          <Toast 
+            message={welcomeMessage} 
+            type={isGuestMode ? 'info' : 'success'}
+            onClose={() => setWelcomeMessage(null)} 
+          />
+      )}
 
       {currentView === ViewState.LANDING ? (
          <div className="w-full h-full z-40">
@@ -133,20 +260,40 @@ const App: React.FC = () => {
          </div>
       ) : (
         <>
-          {/* Sidebar Navigation */}
           <Sidebar 
             currentView={currentView} 
             setView={handleSetView}
             isOpen={isSidebarOpen}
             setIsOpen={setIsSidebarOpen}
             isAdmin={isAdmin}
+            isGuestMode={isGuestMode}
             onAdminToggle={handleAdminToggle}
           />
 
-          {/* Main Content Area */}
           <main className="flex-1 h-full overflow-y-auto pt-16 md:pt-0 scroll-smooth">
             <div className="max-w-3xl mx-auto px-4 py-8 md:py-12 pb-24">
                 
+                {/* Header Profile / Logout */}
+                <div className="flex justify-end mb-4">
+                    <div className="flex items-center gap-3 bg-white px-3 py-1.5 rounded-full shadow-sm border border-gray-100">
+                        {isGuestMode ? (
+                            <div className="w-6 h-6 rounded-full bg-gray-200 flex items-center justify-center">
+                                <User size={14} className="text-gray-500"/>
+                            </div>
+                        ) : (
+                            <img src={session?.user?.user_metadata?.avatar_url || 'https://via.placeholder.com/30'} className="w-6 h-6 rounded-full" />
+                        )}
+                        
+                        <span className="text-xs font-medium text-gray-700 max-w-[100px] truncate">
+                            {isGuestMode ? 'Visitante' : session?.user?.user_metadata?.full_name}
+                        </span>
+                        
+                        <button onClick={handleLogout} className="text-gray-400 hover:text-red-500 ml-1" title={isGuestMode ? "Sair do Modo Visitante" : "Sair"}>
+                            <LogOut size={14} />
+                        </button>
+                    </div>
+                </div>
+
                 {currentView === ViewState.HOME && (
                     <>
                         <header className="mb-8 flex justify-between items-end">
@@ -154,16 +301,16 @@ const App: React.FC = () => {
                                 <h1 className="text-3xl font-bold text-gray-900">Feed de Receitas</h1>
                                 <p className="text-gray-500">O sabor autêntico de Moçambique na sua tela.</p>
                             </div>
-                            {isAdmin && <span className="text-xs bg-red-100 text-red-800 px-2 py-1 rounded font-bold">MODO ADMIN</span>}
                         </header>
                         
-                        {/* Placeholder para Banner Principal */}
                         <div className="mb-8">
                             <AdPlaceholder format="horizontal" />
                         </div>
 
                         <div className="space-y-6">
-                            {recipes.length === 0 ? (
+                            {dataLoading ? (
+                                <div className="text-center py-10 text-gray-400">Carregando receitas...</div>
+                            ) : recipes.length === 0 ? (
                                 <EmptyState message="Nenhuma receita encontrada" actionLabel="Criar Receita Agora" onAction={() => handleSetView(ViewState.CREATE)} />
                             ) : (
                                 recipes.map(recipe => (
@@ -175,7 +322,7 @@ const App: React.FC = () => {
                                         onToggleLike={handleToggleLike}
                                         onAddComment={handleAddComment}
                                         onAddReply={handleAddReply}
-                                        currentUserId={currentUser.id}
+                                        currentUserId={currentUserId}
                                         isAdmin={isAdmin}
                                         onDelete={handleDeleteRecipe}
                                         onEdit={handleEditRecipe}
@@ -190,9 +337,7 @@ const App: React.FC = () => {
                     <div>
                         <header className="mb-8">
                             <h1 className="text-3xl font-bold text-gray-900">Meus Favoritos</h1>
-                            <p className="text-gray-500">Receitas que você guardou com carinho.</p>
                         </header>
-
                         <div className="space-y-6">
                             {favoriteRecipes.length === 0 ? (
                                 <div className="flex flex-col items-center justify-center py-16 text-center">
@@ -200,15 +345,7 @@ const App: React.FC = () => {
                                         <Heart size={48} className="text-red-400" />
                                     </div>
                                     <h3 className="text-xl font-bold text-gray-800 mb-2">Ainda não tem favoritos</h3>
-                                    <p className="text-gray-500 max-w-sm mb-6">
-                                        Explore o feed e clique no coração nas receitas que mais gostar para salvá-las aqui.
-                                    </p>
-                                    <button 
-                                        onClick={() => handleSetView(ViewState.HOME)}
-                                        className="text-orange-600 font-semibold hover:underline"
-                                    >
-                                        Ir para o Feed
-                                    </button>
+                                    <button onClick={() => handleSetView(ViewState.HOME)} className="text-orange-600 font-semibold hover:underline">Ir para o Feed</button>
                                 </div>
                             ) : (
                                 favoriteRecipes.map(recipe => (
@@ -220,7 +357,7 @@ const App: React.FC = () => {
                                         onToggleLike={handleToggleLike}
                                         onAddComment={handleAddComment}
                                         onAddReply={handleAddReply}
-                                        currentUserId={currentUser.id}
+                                        currentUserId={currentUserId}
                                         isAdmin={isAdmin}
                                         onDelete={handleDeleteRecipe}
                                         onEdit={handleEditRecipe}
@@ -236,7 +373,6 @@ const App: React.FC = () => {
                         <header className="mb-8">
                             <h1 className="text-3xl font-bold text-gray-900">Categorias</h1>
                         </header>
-                        
                         {!selectedCategory ? (
                             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                                 {CATEGORIES.map(cat => (
@@ -246,50 +382,30 @@ const App: React.FC = () => {
                                         className="p-6 bg-white border border-gray-200 rounded-xl shadow-sm hover:shadow-md hover:border-orange-300 transition text-left"
                                     >
                                         <h3 className="text-xl font-semibold text-gray-800">{cat}</h3>
-                                        <p className="text-sm text-gray-500 mt-1">
-                                            {recipes.filter(r => r.category === cat).length} receitas
-                                        </p>
+                                        <p className="text-sm text-gray-500 mt-1">{recipes.filter(r => r.category === cat).length} receitas</p>
                                     </button>
                                 ))}
                             </div>
                         ) : (
                             <div>
-                                <button 
-                                    onClick={() => setSelectedCategory(null)}
-                                    className="mb-4 text-orange-600 font-medium hover:underline flex items-center"
-                                >
-                                    ← Voltar para Categorias
-                                </button>
-                                <div className="flex justify-between items-center mb-6">
-                                    <h2 className="text-2xl font-bold text-gray-800">{selectedCategory}</h2>
-                                    {isAdmin && <span className="text-xs bg-red-100 text-red-800 px-2 py-1 rounded font-bold">MODO ADMIN</span>}
-                                </div>
-
-                                {/* Placeholder para Banner em Categorias */}
-                                <div className="mb-6">
-                                    <AdPlaceholder format="horizontal" />
-                                </div>
-                                
+                                <button onClick={() => setSelectedCategory(null)} className="mb-4 text-orange-600 font-medium hover:underline">← Voltar</button>
+                                <h2 className="text-2xl font-bold text-gray-800 mb-6">{selectedCategory}</h2>
                                 <div className="space-y-6">
-                                    {filteredRecipes.length > 0 ? (
-                                        filteredRecipes.map(recipe => (
-                                            <RecipeCard 
-                                                key={recipe.id} 
-                                                recipe={recipe} 
-                                                isFavorite={favorites.includes(recipe.id)}
-                                                onToggleFavorite={handleToggleFavorite}
-                                                onToggleLike={handleToggleLike}
-                                                onAddComment={handleAddComment}
-                                                onAddReply={handleAddReply}
-                                                currentUserId={currentUser.id}
-                                                isAdmin={isAdmin}
-                                                onDelete={handleDeleteRecipe}
-                                                onEdit={handleEditRecipe}
-                                            />
-                                        ))
-                                    ) : (
-                                        <EmptyState message={`Sem receitas de ${selectedCategory}`} actionLabel="Criar Receita" onAction={() => handleSetView(ViewState.CREATE)}/>
-                                    )}
+                                    {filteredRecipes.length > 0 ? filteredRecipes.map(recipe => (
+                                        <RecipeCard 
+                                            key={recipe.id} 
+                                            recipe={recipe} 
+                                            isFavorite={favorites.includes(recipe.id)}
+                                            onToggleFavorite={handleToggleFavorite}
+                                            onToggleLike={handleToggleLike}
+                                            onAddComment={handleAddComment}
+                                            onAddReply={handleAddReply}
+                                            currentUserId={currentUserId}
+                                            isAdmin={isAdmin}
+                                            onDelete={handleDeleteRecipe}
+                                            onEdit={handleEditRecipe}
+                                        />
+                                    )) : <EmptyState message={`Sem receitas de ${selectedCategory}`} actionLabel="Criar Receita" onAction={() => handleSetView(ViewState.CREATE)}/>}
                                 </div>
                             </div>
                         )}
@@ -307,13 +423,8 @@ const App: React.FC = () => {
                     />
                 )}
 
-                {currentView === ViewState.AI_CHEF && (
-                    <AIChef />
-                )}
-
-                {currentView === ViewState.ABOUT && (
-                    <AboutPage />
-                )}
+                {currentView === ViewState.AI_CHEF && <AIChef />}
+                {currentView === ViewState.ABOUT && <AboutPage />}
 
             </div>
           </main>

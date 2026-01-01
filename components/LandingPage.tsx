@@ -207,7 +207,7 @@ const LandingPage: React.FC<LandingPageProps> = ({ onStart }) => {
       {/* Footer / Credits */}
       <div className="absolute bottom-6 w-full text-center z-20 px-4">
         <p className="text-white/40 text-[10px] uppercase tracking-[0.2em] font-medium">
-          Nelton da Méria Nazaré Ambate &copy; 2025
+          Nelton da Méria Nazaré Ambate &copy; 2026
         </p>
       </div>
     </div>
